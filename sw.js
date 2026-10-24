@@ -1,5 +1,5 @@
 // Cache offline: dopo la prima apertura il gioco funziona senza connessione.
-const VERSIONE = "formiche-golose-v3";
+const VERSIONE = "formiche-golose-v4";
 const FILE = [
   "./", "index.html", "manifest.webmanifest",
   "js/sprites.js", "js/motore.js", "js/gioco.js",
