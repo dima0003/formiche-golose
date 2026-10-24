@@ -144,8 +144,9 @@
     const d = daDisegno(sprite, regole.specchia);
     const t = creaTabellone(d.w, d.h, d.celle);
     const totale = pixelRimasti(t);
-    const minimo = Math.max(4, Math.round(totale / 40));
-    const massimo = Math.max(minimo + 4, Math.round(totale / 12));
+    // Sciami pochi e grandi (nell'originale vanno da circa 10 a 60 formiche).
+    const minimo = Math.max(6, Math.round(totale / 14));
+    const massimo = Math.max(minimo + 6, Math.round(totale / 5));
 
     const sequenza = [];
     while (pixelRimasti(t) > 0) {
@@ -185,7 +186,10 @@
     return {
       livello,
       tab: creaTabellone(livello.w, livello.h, livello.celle),
-      corsie: livello.corsie.map((c) => c.map((s) => ({ ...s }))),
+      corsie: (() => {
+        let id = 0;
+        return livello.corsie.map((c) => c.map((s) => ({ ...s, id: id++ })));
+      })(),
       attesa: [],
       stato: "gioco", // "gioco" | "vinto" | "perso"
       storia: [],
@@ -211,7 +215,7 @@
         const m = mangia(p.tab, s.colore, s.n);
         if (m.length) {
           s.n -= m.length;
-          eventi.push({ da: "attesa", posto: j, colore: s.colore, celle: m });
+          eventi.push({ da: "attesa", id: s.id, colore: s.colore, celle: m });
           cambiato = true;
         }
       }
@@ -221,26 +225,27 @@
 
   // Tocca la corsia indicata: parte lo sciame in testa. Restituisce gli eventi
   // da animare, oppure null se la mossa non è possibile.
+  // Lo sciame toccato prende un posto: le formiche che trovano cibo partono,
+  // le altre restano lì ad aspettare. Se tutti i posti restano pieni si perde.
   function tocca(p, corsia) {
     if (p.stato !== "gioco" || !p.corsie[corsia] || !p.corsie[corsia].length) return null;
+    if (p.attesa.length >= p.livello.posti) return null;
     p.storia.push(fotografia(p));
     const s = p.corsie[corsia].shift();
     const eventi = [];
     const m = mangia(p.tab, s.colore, s.n);
-    if (m.length) eventi.push({ da: "corsia", corsia, colore: s.colore, celle: m });
+    if (m.length) eventi.push({ da: "corsia", corsia, id: s.id, colore: s.colore, celle: m });
     const resto = s.n - m.length;
     if (resto > 0) {
-      if (p.attesa.length < p.livello.posti) p.attesa.push({ colore: s.colore, n: resto });
-      else {
-        p.attesa.push({ colore: s.colore, n: resto });
-        p.stato = "perso";
-        eventi.push({ da: "attesa-piena" });
-        return eventi;
-      }
-      eventi.push({ da: "in-attesa", corsia, colore: s.colore, n: resto });
+      p.attesa.push({ id: s.id, colore: s.colore, n: resto });
+      eventi.push({ da: "in-attesa", corsia, id: s.id, colore: s.colore, n: resto });
     }
     svuotaAttesa(p, eventi);
     if (pixelRimasti(p.tab) === 0) p.stato = "vinto";
+    else if (p.attesa.length >= p.livello.posti) {
+      p.stato = "perso";
+      eventi.push({ da: "attesa-piena" });
+    }
     return eventi;
   }
 

@@ -136,6 +136,9 @@
   const tela = $("tela");
   const ctx = tela.getContext("2d");
   let partita = null, visivo = null, formiche = [], briciole = [], scossa = 0, finale = false;
+  // Posti come li vede il giocatore: uno sciame toccato resta nel suo posto finché
+  // tutte le sue formiche non sono uscite (o, se non trovano cibo, finché aspetta).
+  let postiVisivi = [], inUscita = new Map();
   let L = null; // misure dello schermo di gioco
 
   function avvia(n) {
@@ -148,6 +151,8 @@
 
   function ripristinaVisivo() {
     visivo = Int8Array.from(partita.tab.celle);
+    postiVisivi = partita.attesa.map((a) => ({ id: a.id, colore: a.colore }));
+    inUscita = new Map();
     formiche = [];
     briciole = [];
     finale = false;
@@ -168,7 +173,8 @@
     const altezzaCorsie = T + 3 * (t2 + 6) + margine;
     const P = Math.min((W - margine * 2) / liv.posti - 10, T * 0.85);
     const altezzaAttesa = P + 22;
-    const zonaAlta = H - altezzaCorsie - altezzaAttesa - margine;
+    const altezzaTana = 46;
+    const zonaAlta = H - altezzaCorsie - altezzaAttesa - altezzaTana - margine;
     const cella = Math.max(4, Math.floor(Math.min((W - margine * 2) / liv.w, (zonaAlta - margine) / liv.h)));
     const bw = cella * liv.w, bh = cella * liv.h;
     L = {
@@ -176,8 +182,9 @@
       bx: Math.round((W - bw) / 2),
       by: Math.round(margine / 2 + (zonaAlta - bh) / 2),
       bw, bh,
-      attesaY: zonaAlta + 6,
-      corsieY: zonaAlta + altezzaAttesa + 8,
+      tanaY: zonaAlta + altezzaTana / 2 + 4,
+      attesaY: zonaAlta + altezzaTana + 6,
+      corsieY: zonaAlta + altezzaTana + altezzaAttesa + 8,
       xCorsia: (i) => (W * (i + 0.5)) / nc,
       xPosto: (j) => W / 2 + (j - (liv.posti - 1) / 2) * (P + 10),
     };
@@ -189,23 +196,25 @@
     return [L.bx + (i % w + 0.5) * L.cella, L.by + (Math.floor(i / w) + 0.5) * L.cella];
   }
 
-  // Ogni pixel mangiato ha la sua formica: parte dal gettone, raggiunge il pixel, lo porta via.
+  // Ogni pixel mangiato ha la sua formica: esce dalla tana, raggiunge il pixel, lo porta via.
   function lanciaFormiche(eventi) {
     const ora = performance.now();
     for (const e of eventi) {
       if (e.da === "attesa-piena") { scossa = ora; suona(140, 0.35, "sawtooth", 0.06); continue; }
+      if (e.id === undefined) continue;
+      if (!postiVisivi.some((p) => p.id === e.id)) postiVisivi.push({ id: e.id, colore: e.colore });
       if (!e.celle) continue;
-      const x0 = e.da === "corsia" ? L.xCorsia(e.corsia) : L.xPosto(e.posto);
-      const y0 = e.da === "corsia" ? L.corsieY + L.T / 2 : L.attesaY + L.P / 2;
-      const passo = Math.min(28, 700 / e.celle.length);
+      inUscita.set(e.id, (inUscita.get(e.id) || 0) + e.celle.length);
+      const passo = Math.min(45, 1400 / e.celle.length);
       e.celle.forEach((cella, k) => {
         const [tx, ty] = centroCella(cella);
-        const sx = x0 + (Math.random() - 0.5) * L.T * 0.6, sy = y0 + (Math.random() - 0.5) * L.T * 0.4;
+        const sx = L.W / 2 + (Math.random() - 0.5) * 18, sy = L.tanaY + (Math.random() - 0.5) * 6;
         const dist = Math.hypot(tx - sx, ty - sy);
         formiche.push({
+          id: e.id, uscita: false,
           sx, sy, tx, ty, cella, colore: partita.livello.colori[e.colore],
           inizio: ora + k * passo, durata: 260 + dist * 0.9, onda: Math.random() * 6.28,
-          arrivata: false, ritorno: 0, rx: tx + (Math.random() - 0.5) * 80, ry: L.H + 20,
+          arrivata: false, ritorno: 0, rx: L.W / 2 + (Math.random() - 0.5) * 16, ry: L.tanaY,
         });
       });
     }
@@ -219,6 +228,7 @@
     const nc = partita.corsie.length;
     const i = Math.min(nc - 1, Math.max(0, Math.floor((x / L.W) * nc)));
     if (!partita.corsie[i].length) return;
+    if (postiVisivi.length >= partita.livello.posti) { scossa = performance.now(); return; }
     const eventi = M.tocca(partita, i);
     if (!eventi) return;
     if (navigator.vibrate) navigator.vibrate(8);
@@ -244,53 +254,113 @@
     ctx.closePath();
   }
 
-  function disegnaFormica(x, y, angolo, s, colore, alfa, corpo) {
-    corpo = corpo || "#2b1d14";
+  // Formica vista dall'alto, in stile cartone: testa grande con occhioni e antenne.
+  function disegnaFormica(x, y, angolo, s, colore, alfa) {
+    const scuro = "#2b1d14";
     ctx.save();
     ctx.globalAlpha = alfa;
     ctx.translate(x, y);
     ctx.rotate(angolo);
-    ctx.strokeStyle = corpo;
-    ctx.lineWidth = Math.max(1, s * 0.12);
-    const zampa = Math.sin(performance.now() / 45 + x) * s * 0.25;
+    ctx.lineCap = "round";
+    ctx.strokeStyle = scuro;
+    ctx.lineWidth = Math.max(1, s * 0.1);
+    const zampa = Math.sin(performance.now() / 45 + x) * s * 0.22;
     for (let k = -1; k <= 1; k++) {
       ctx.beginPath();
-      ctx.moveTo(k * s * 0.3, 0);
-      ctx.lineTo(k * s * 0.3 + zampa, -s * 0.55);
-      ctx.moveTo(k * s * 0.3, 0);
-      ctx.lineTo(k * s * 0.3 - zampa, s * 0.55);
+      ctx.moveTo(k * s * 0.28, 0);
+      ctx.lineTo(k * s * 0.28 + zampa, -s * 0.55);
+      ctx.moveTo(k * s * 0.28, 0);
+      ctx.lineTo(k * s * 0.28 - zampa, s * 0.55);
       ctx.stroke();
     }
-    ctx.fillStyle = corpo;
-    ctx.beginPath(); ctx.ellipse(s * 0.62, 0, s * 0.24, s * 0.22, 0, 0, 6.29); ctx.fill();
-    ctx.beginPath(); ctx.ellipse(s * 0.15, 0, s * 0.22, s * 0.17, 0, 0, 6.29); ctx.fill();
+    // antenne con pallina
+    for (const lato of [-1, 1]) {
+      ctx.beginPath();
+      ctx.moveTo(s * 0.78, lato * s * 0.1);
+      ctx.quadraticCurveTo(s * 1.0, lato * s * 0.18, s * 1.1, lato * s * 0.38);
+      ctx.stroke();
+      ctx.fillStyle = scuro;
+      ctx.beginPath(); ctx.arc(s * 1.1, lato * s * 0.38, s * 0.08, 0, 6.29); ctx.fill();
+    }
+    // addome del colore dello sciame, torace, testa
+    ctx.lineWidth = Math.max(1, s * 0.08);
     ctx.fillStyle = colore;
-    ctx.beginPath(); ctx.ellipse(-s * 0.45, 0, s * 0.42, s * 0.32, 0, 0, 6.29); ctx.fill();
-    ctx.stroke();
+    ctx.beginPath(); ctx.ellipse(-s * 0.48, 0, s * 0.44, s * 0.34, 0, 0, 6.29); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = "rgba(255,255,255,0.45)";
+    ctx.beginPath(); ctx.ellipse(-s * 0.58, -s * 0.12, s * 0.15, s * 0.08, -0.3, 0, 6.29); ctx.fill();
+    ctx.fillStyle = scuro;
+    ctx.beginPath(); ctx.ellipse(s * 0.1, 0, s * 0.18, s * 0.15, 0, 0, 6.29); ctx.fill();
+    ctx.fillStyle = "#5a3d2b";
+    ctx.beginPath(); ctx.arc(s * 0.55, 0, s * 0.3, 0, 6.29); ctx.fill(); ctx.stroke();
+    // occhioni
+    for (const lato of [-1, 1]) {
+      ctx.fillStyle = "#ffffff";
+      ctx.beginPath(); ctx.arc(s * 0.66, lato * s * 0.13, s * 0.13, 0, 6.29); ctx.fill();
+      ctx.fillStyle = scuro;
+      ctx.beginPath(); ctx.arc(s * 0.71, lato * s * 0.12, s * 0.07, 0, 6.29); ctx.fill();
+    }
     ctx.restore();
   }
 
+  // Gettone dello sciame: il musetto di una formica sul colore dello sciame, col numero.
   function disegnaGettone(cx, cy, s, colore, n, alfa) {
+    const scuro = "#2b1d14";
     ctx.save();
     ctx.globalAlpha = alfa;
     ctx.fillStyle = "rgba(59,42,32,0.25)";
-    rettangoloTondo(cx - s / 2, cy - s / 2 + s * 0.07, s, s, s * 0.24);
+    rettangoloTondo(cx - s / 2, cy - s / 2 + s * 0.07, s, s, s * 0.26);
     ctx.fill();
     ctx.fillStyle = colore;
-    rettangoloTondo(cx - s / 2, cy - s / 2, s, s, s * 0.24);
+    rettangoloTondo(cx - s / 2, cy - s / 2, s, s, s * 0.26);
     ctx.fill();
     ctx.strokeStyle = mescola(colore, "#000000", 0.35);
     ctx.lineWidth = Math.max(1.5, s * 0.05);
     ctx.stroke();
-    const [r, g, b] = rgb(colore);
-    const corpo = 0.299 * r + 0.587 * g + 0.114 * b < 80 ? "#f6e7cf" : "#2b1d14";
-    disegnaFormica(cx - s * 0.18, cy - s * 0.12, -0.4, s * 0.26, mescola(colore, "#ffffff", 0.35), 1, corpo);
-    disegnaFormica(cx + s * 0.2, cy - s * 0.2, 0.5, s * 0.22, mescola(colore, "#ffffff", 0.35), 1, corpo);
-    ctx.fillStyle = chiaro(colore) ? "#3b2a20" : "#ffffff";
-    ctx.font = "800 " + Math.round(s * 0.36) + "px ui-rounded, system-ui, sans-serif";
+    ctx.fillStyle = "rgba(255,255,255,0.22)";
+    rettangoloTondo(cx - s * 0.4, cy - s * 0.44, s * 0.8, s * 0.2, s * 0.1);
+    ctx.fill();
+
+    const fx = cx, fy = cy - s * 0.1, r = s * 0.25;
+    const [cr, cg, cb] = rgb(colore);
+    const antenne = 0.299 * cr + 0.587 * cg + 0.114 * cb < 80 ? "#f6e7cf" : scuro;
+    ctx.lineCap = "round";
+    ctx.strokeStyle = antenne;
+    ctx.lineWidth = Math.max(1.5, s * 0.045);
+    for (const lato of [-1, 1]) {
+      ctx.beginPath();
+      ctx.moveTo(fx + lato * r * 0.45, fy - r * 0.85);
+      ctx.quadraticCurveTo(fx + lato * r * 0.6, fy - r * 1.55, fx + lato * r * 1.15, fy - r * 1.6);
+      ctx.stroke();
+      ctx.fillStyle = antenne;
+      ctx.beginPath(); ctx.arc(fx + lato * r * 1.15, fy - r * 1.6, s * 0.045, 0, 6.29); ctx.fill();
+    }
+    ctx.strokeStyle = scuro;
+    ctx.fillStyle = "#6b4630";
+    ctx.beginPath(); ctx.ellipse(fx, fy, r * 1.08, r, 0, 0, 6.29); ctx.fill();
+    ctx.stroke();
+    for (const lato of [-1, 1]) {
+      ctx.fillStyle = "#ffffff";
+      ctx.beginPath(); ctx.ellipse(fx + lato * r * 0.42, fy - r * 0.15, r * 0.34, r * 0.4, 0, 0, 6.29); ctx.fill();
+      ctx.fillStyle = scuro;
+      ctx.beginPath(); ctx.arc(fx + lato * r * 0.36, fy - r * 0.05, r * 0.2, 0, 6.29); ctx.fill();
+      ctx.fillStyle = "#ffffff";
+      ctx.beginPath(); ctx.arc(fx + lato * r * 0.3, fy - r * 0.15, r * 0.07, 0, 6.29); ctx.fill();
+      ctx.fillStyle = "rgba(255,120,140,0.55)";
+      ctx.beginPath(); ctx.ellipse(fx + lato * r * 0.78, fy + r * 0.42, r * 0.17, r * 0.1, 0, 0, 6.29); ctx.fill();
+    }
+    ctx.strokeStyle = scuro;
+    ctx.lineWidth = Math.max(1.2, s * 0.03);
+    ctx.beginPath(); ctx.arc(fx, fy + r * 0.38, r * 0.22, 0.2, Math.PI - 0.2); ctx.stroke();
+
+    const pw = Math.max(s * 0.46, String(n).length * s * 0.2 + s * 0.16), ph = s * 0.27;
+    ctx.fillStyle = "#fffaf1";
+    rettangoloTondo(cx - pw / 2, cy + s * 0.22, pw, ph, ph / 2);
+    ctx.fill();
+    ctx.fillStyle = "#3b2a20";
+    ctx.font = "800 " + Math.round(s * 0.24) + "px ui-rounded, system-ui, sans-serif";
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
-    ctx.fillText(n, cx, cy + s * 0.2);
+    ctx.fillText(n, cx, cy + s * 0.22 + ph / 2 + 1);
     ctx.restore();
   }
 
@@ -324,15 +394,29 @@
       }
     }
 
-    // posti d'attesa
+    // tana da cui escono le formiche
+    const tx0 = L.W / 2;
+    ctx.fillStyle = "rgba(255,250,241,0.5)";
+    ctx.beginPath(); ctx.ellipse(tx0, L.tanaY + 3, 34, 14, 0, 0, 6.29); ctx.fill();
+    ctx.fillStyle = "#6b4630";
+    ctx.beginPath(); ctx.ellipse(tx0, L.tanaY, 28, 11, 0, 0, 6.29); ctx.fill();
+    ctx.fillStyle = "#2b1d14";
+    ctx.beginPath(); ctx.ellipse(tx0, L.tanaY + 2, 22, 7.5, 0, 0, 6.29); ctx.fill();
+
+    // posti: chi non ha più formiche in uscita né in attesa libera il posto
+    postiVisivi = postiVisivi.filter((p) => (inUscita.get(p.id) || 0) > 0 || partita.attesa.some((a) => a.id === p.id));
     const tremito = ora - scossa < 400 ? Math.sin((ora - scossa) / 25) * 6 * (1 - (ora - scossa) / 400) : 0;
     for (let j = 0; j < liv.posti; j++) {
       const x = L.xPosto(j) + tremito, y = L.attesaY + L.P / 2;
       ctx.fillStyle = "rgba(59,42,32,0.12)";
       rettangoloTondo(x - L.P / 2, y - L.P / 2, L.P, L.P, L.P * 0.24);
       ctx.fill();
-      const s = partita.attesa[j];
-      if (s) disegnaGettone(x, y, L.P * 0.92, colori[s.colore], s.n, 1);
+      const p = postiVisivi[j];
+      if (p) {
+        const fermo = partita.attesa.find((a) => a.id === p.id);
+        const n = (inUscita.get(p.id) || 0) + (fermo ? fermo.n : 0);
+        disegnaGettone(x, y, L.P * 0.92, colori[p.colore], n, 1);
+      }
     }
 
     // corsie: in testa il gettone grande da toccare, sotto quelli in coda
@@ -361,10 +445,14 @@
     ctx.globalAlpha = 1;
 
     // formiche
-    const misura = Math.max(9, Math.min(16, L.cella * 1.1));
+    const misura = Math.max(11, Math.min(18, L.cella * 1.3));
     formiche = formiche.filter((f) => f.ritorno < 1);
     for (const f of formiche) {
       if (ora < f.inizio) continue;
+      if (!f.uscita) {
+        f.uscita = true;
+        inUscita.set(f.id, (inUscita.get(f.id) || 1) - 1);
+      }
       let p = (ora - f.inizio) / f.durata, x, y, angolo;
       if (p < 1) {
         const e = 1 - (1 - p) * (1 - p);
