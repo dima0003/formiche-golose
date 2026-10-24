@@ -1,0 +1,16 @@
+{
+  "name": "Formiche Golose",
+  "short_name": "Formiche",
+  "description": "Puzzle in pixel art: libera le formiche giuste e fagli divorare il cibo.",
+  "lang": "it",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f6e7cf",
+  "theme_color": "#f6e7cf",
+  "icons": [
+    { "src": "icone/icona-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "icone/icona-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}
